@@ -66,7 +66,6 @@ def run_car():
     """Main car running function"""
 
     pi_car = Picarx()  # Create picar instance
-    manuever_list_str = f"List of available maneuvers: {', '.join(Maneuver.available_maneuvers())}"
 
     # Set up maneuvers
     Maneuver('x', "terminate_program", lambda : 0)
@@ -77,6 +76,8 @@ def run_car():
     Maneuver('j', "three_point_turn_left", lambda : ask_for_angle()(pi_car.three_point_turn))
     Maneuver('k', "three_point_turn_right", lambda : ask_for_angle(invert=True)(pi_car.three_point_turn))
     Maneuver('c', "calibrate_car", lambda : pi_car.calibrate_steering)
+
+    manuever_list_str = f"List of available maneuvers: {', '.join(Maneuver.available_maneuvers())}"
 
     # Main program loop
     while True:
