@@ -4,7 +4,12 @@ import math
 import atexit
 import logging
 
+import rossros as rr
 from logdecorator import log_on_start , log_on_end , log_on_error
+
+import greyscale as gs
+import ultrasonic as us
+from bus import Bus, ConcurrentHelper
 
 try:
     from robot_hat import *
@@ -128,7 +133,7 @@ class Picarx(object):
             # Set new angle and update config file
             self.set_dir_servo_angle(self.dir_servo_pin.angle(self.dir_servo_pin.angle - math.degrees(math.atan(sign_bias * (side_dist/forward_dist)))))
 
-            
+
         except TypeError:
             print("Encountered an error in your input. Failed to calibrate")
         
@@ -310,6 +315,147 @@ class Picarx(object):
         for i, motor_orient, motor_speed in enumerate(zip(motor_speeds, orients), start=1):
             self.set_motor_speed(i, motor_orient * motor_speed)
 
+
+# Main loops for the course
+
+def main_loop():
+    """Main loop for week 3"""
+
+    px = Picarx()
+
+    sensor = gs.Sensor()
+    interpreter = gs.Interpreter()
+    controller = gs.Controller()
+
+    while True:
+        adc_read = sensor.read_adcs()
+        scaled_output = interpreter.interpret(adc_read)
+        print(controller.control(px, 2, scaled_output))
+        time.sleep(.2)
+
+
+def main_concurrent():
+    """Main loop for week 4"""
+
+    px = Picarx()
+
+    gs_sensor = gs.Sensor()
+    gs_interpreter = gs.Interpreter()
+    gs_controller = gs.Controller(-30)
+
+    bus_1 = Bus()
+    bus_2 = Bus()
+
+    # Create consumers/producers for busses
+    bus_1.producer = ConcurrentHelper(lambda : bus_1.write(gs_sensor.read_adcs()), .1)
+    bus_1.consumer = ConcurrentHelper(lambda : gs_interpreter.interpret(bus_1.read()), .1)
+    bus_2.producer = ConcurrentHelper(lambda : bus_2.write(gs_interpreter.get_scaled_output()), .1)
+    bus_2.consumer = ConcurrentHelper(lambda : gs_controller.control(bus_2.read(), px, 2), .1)
+
+    # Run busses
+    bus_1.run()
+    bus_2.run()
+    while True:
+        pass
+
+
+def main_ross_concurrent():
+    """Main loop for week 5"""
+
+    px = Picarx()
+
+    # ADC stuff TODO: Rename later for the other classes
+    gs_sensor = gs.Sensor()
+    gs_interpreter = gs.Interpreter()
+    gs_controller = gs.Controller(-30)
+
+    # Create busses
+
+    adc_read_bus = rr.Bus(name="ADC reader")
+    adc_interpret_bus = rr.Bus(name="ADC interpreter")
+    sonar_read_bus = rr.Bus(name="Sonar reader")
+    sonar_interpret_bus = rr.Bus(name="Sonar interpreter")
+    control_bus = rr.Bus(name="Car controller bus")
+    terminate_bus = rr.Bus(name="Terminate tasks")
+
+    # Create consumer/producers
+
+    read_adc = rr.Producer(
+        gs_sensor.read_adcs,
+        adc_read_bus,
+        0.05,
+        terminate_bus,
+        "Read greyscale sensor"
+    )
+
+    read_sonar = rr.Producer(
+        lambda : 0,  # TODO: Replace with actual reader later
+        sonar_read_bus,
+        0.05,
+        terminate_bus,
+        "Read sonar sensor"
+    )
+
+    interpret_adc = rr.ConsumerProducer(
+        gs_interpreter.interpret,
+        adc_read_bus,
+        adc_interpret_bus,
+        .05,
+        terminate_bus,
+        "Interpret greyscale sensor"
+    )
+
+    interpret_sonar = rr.ConsumerProducer(
+        lambda : 0,  # TODO: Replace with actual sonar interpretor later
+        sonar_read_bus,
+        sonar_interpret_bus,
+        .05,
+        terminate_bus,
+        "Interpret Sonar sensor"
+    )
+
+    line_control = rr.ConsumerProducer(
+        gs_controller.control,
+        (interpret_adc, interpret_sonar),
+        control_bus,
+        .1,
+        terminate_bus
+    )
+
+    stop_control = rr.ConsumerProducer(
+
+    )
+
+    bus_printer = rr.Printer(
+        (read_adc, read_sonar, interpret_adc, interpret_sonar, line_control),  # input data buses
+        0.25,
+        terminate_bus,
+        "Print raw and derived data",
+        "Data bus readings are: "
+        )
+    
+    termination_timer = rr.Timer(
+        terminate_bus,
+        3,
+        0.01,
+        terminate_bus,
+        "Termination timer"
+        )
+
+    # Create a list of producer-consumers to execute concurrently
+    producer_consumer_list = [
+        read_adc,
+        read_sonar,
+        interpret_adc,
+        interpret_sonar,
+        line_control,
+        stop_control,
+        termination_timer,
+        bus_printer
+        ]
+
+    # Execute the list of producer-consumers concurrently
+    rr.runConcurrently(producer_consumer_list)
 
 
 if __name__ == "__main__":
